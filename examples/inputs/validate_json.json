@@ -1,0 +1,11 @@
+{
+  "document": {
+    "name": "Alice",
+    "age": 32
+  },
+  "required": ["name", "age"],
+  "types": {
+    "name": "string",
+    "age": "number"
+  }
+}

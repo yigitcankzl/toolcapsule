@@ -1,0 +1,12 @@
+name: timeout_demo
+language: go
+input_schema: input.schema.json
+output_schema: output.schema.json
+limits:
+  timeout_ms: 50
+  memory_mb: 32
+permissions:
+  network: false
+  filesystem: none
+build:
+  target: wasip1

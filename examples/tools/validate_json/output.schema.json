@@ -1,0 +1,9 @@
+{
+  "type": "object",
+  "required": ["valid", "errors"],
+  "additionalProperties": false,
+  "properties": {
+    "valid": { "type": "boolean" },
+    "errors": { "type": "array", "items": { "type": "string" } }
+  }
+}

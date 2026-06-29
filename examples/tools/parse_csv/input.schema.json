@@ -1,0 +1,8 @@
+{
+  "type": "object",
+  "required": ["csv"],
+  "additionalProperties": false,
+  "properties": {
+    "csv": { "type": "string" }
+  }
+}

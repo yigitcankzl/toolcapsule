@@ -1,0 +1,12 @@
+name: unsupported_network_tool
+language: go
+input_schema: input.schema.json
+output_schema: output.schema.json
+limits:
+  timeout_ms: 30000
+  memory_mb: 32
+permissions:
+  network: true
+  filesystem: none
+build:
+  target: wasip1

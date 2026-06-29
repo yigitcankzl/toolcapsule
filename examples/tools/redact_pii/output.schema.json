@@ -1,0 +1,12 @@
+{
+  "type": "object",
+  "required": ["text", "redactions"],
+  "additionalProperties": false,
+  "properties": {
+    "text": { "type": "string" },
+    "redactions": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  }
+}

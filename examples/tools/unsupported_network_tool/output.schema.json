@@ -1,0 +1,9 @@
+{
+  "type": "object",
+  "required": ["mode", "method"],
+  "additionalProperties": false,
+  "properties": {
+    "mode": { "type": "string" },
+    "method": { "type": "string" }
+  }
+}
