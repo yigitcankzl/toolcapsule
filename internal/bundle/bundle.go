@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"toolcapsule/internal/cache"
@@ -15,8 +16,9 @@ import (
 )
 
 type Options struct {
-	RunID string
-	Out   string
+	RunID   string
+	Out     string
+	SignKey string
 }
 
 type Record struct {
@@ -34,6 +36,8 @@ type Result struct {
 	RunID      string `json:"run_id"`
 	Tool       string `json:"tool"`
 	SourceHash string `json:"source_hash"`
+	Signed     bool   `json:"signed"`
+	PublicKey  string `json:"public_key,omitempty"`
 }
 
 type Extracted struct {
@@ -65,9 +69,40 @@ func Create(logPath string, opts Options) (Result, error) {
 		return Result{}, err
 	}
 
-	out, err := os.Create(opts.Out)
+	recordData, err := json.MarshalIndent(record, "", "  ")
 	if err != nil {
 		return Result{}, err
+	}
+	entries := map[string][]byte{"record.json": recordData}
+	for _, name := range []string{manifest.FileName, m.Module, m.InputSchema, m.OutputSchema, "build.json"} {
+		data, err := os.ReadFile(filepath.Join(capsuleDir, name))
+		if err != nil {
+			return Result{}, err
+		}
+		entries[name] = data
+	}
+
+	var publicKey string
+	if opts.SignKey != "" {
+		digestData, signatureData, signer, err := SignEntries(entries, opts.SignKey)
+		if err != nil {
+			return Result{}, err
+		}
+		entries[DigestFileName] = digestData
+		entries[SignatureFileName] = signatureData
+		publicKey = signer
+	}
+
+	if err := writeBundle(opts.Out, entries); err != nil {
+		return Result{}, err
+	}
+	return Result{Path: opts.Out, RunID: record.RunID, Tool: record.Tool, SourceHash: record.SourceHash, Signed: opts.SignKey != "", PublicKey: publicKey}, nil
+}
+
+func writeBundle(path string, entries map[string][]byte) error {
+	out, err := os.Create(path)
+	if err != nil {
+		return err
 	}
 	defer out.Close()
 	gz := gzip.NewWriter(out)
@@ -75,19 +110,17 @@ func Create(logPath string, opts Options) (Result, error) {
 	tw := tar.NewWriter(gz)
 	defer tw.Close()
 
-	recordData, err := json.MarshalIndent(record, "", "  ")
-	if err != nil {
-		return Result{}, err
+	names := make([]string, 0, len(entries))
+	for name := range entries {
+		names = append(names, name)
 	}
-	if err := addBytes(tw, "record.json", recordData); err != nil {
-		return Result{}, err
-	}
-	for _, name := range []string{manifest.FileName, m.Module, m.InputSchema, m.OutputSchema, "build.json"} {
-		if err := addFile(tw, capsuleDir, name); err != nil {
-			return Result{}, err
+	sort.Strings(names)
+	for _, name := range names {
+		if err := addBytes(tw, name, entries[name]); err != nil {
+			return err
 		}
 	}
-	return Result{Path: opts.Out, RunID: record.RunID, Tool: record.Tool, SourceHash: record.SourceHash}, nil
+	return nil
 }
 
 func Extract(path string) (Extracted, func(), error) {
@@ -187,15 +220,6 @@ func selectRecord(records []Record, runID string) (Record, error) {
 		}
 	}
 	return Record{}, fmt.Errorf("run_id %q not found", runID)
-}
-
-func addFile(tw *tar.Writer, root, name string) error {
-	path := filepath.Join(root, name)
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	return addBytes(tw, name, data)
 }
 
 func addBytes(tw *tar.Writer, name string, data []byte) error {

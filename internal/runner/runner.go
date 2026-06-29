@@ -73,7 +73,7 @@ func Run(toolDir, inputPath string, opts Options) (Result, error) {
 
 	startedAt := time.Now().UTC().Format(time.RFC3339)
 	runID := recorder.RunID()
-	sourceHash, err := cache.SourceHash(toolDir)
+	sourceHash, err := toolSourceHash(toolDir, m)
 	if err != nil {
 		return Result{}, err
 	}
@@ -107,6 +107,9 @@ func Run(toolDir, inputPath string, opts Options) (Result, error) {
 		return res, nil
 	}
 	baseRecord.InputSchemaValid = true
+	if isPrebuiltCapsule(toolDir, m) {
+		return runWASMCapsule(toolDir, m, inputData, sourceHash, baseRecord)
+	}
 
 	buildResult, err := builder.Build(toolDir, builder.Options{Force: opts.ForceBuild})
 	if err != nil {
@@ -137,13 +140,17 @@ func Run(toolDir, inputPath string, opts Options) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	wasmPath := filepath.Join(buildResult.CapsuleDir, capsuleManifest.Module)
-	wasmResult, runErr := wasm.Run(wasmPath, inputData, wasm.Options{
+	baseRecord.CacheHit = buildResult.CacheHit
+	return runWASMCapsule(buildResult.CapsuleDir, capsuleManifest, inputData, sourceHash, baseRecord)
+
+}
+
+func runWASMCapsule(capsuleDir string, capsuleManifest manifest.Manifest, inputData []byte, sourceHash string, baseRecord record) (Result, error) {
+	wasmResult, runErr := wasm.Run(filepath.Join(capsuleDir, capsuleManifest.Module), inputData, wasm.Options{
 		Timeout:  time.Duration(capsuleManifest.Limits.TimeoutMS) * time.Millisecond,
 		MemoryMB: capsuleManifest.Limits.MemoryMB,
 	})
 
-	baseRecord.CacheHit = buildResult.CacheHit
 	baseRecord.WASMHash = capsuleManifest.Capsule.WASMHash
 	baseRecord.DurationMS = wasmResult.DurationMS
 	baseRecord.Stdout = wasmResult.Stdout
@@ -153,7 +160,7 @@ func Run(toolDir, inputPath string, opts Options) (Result, error) {
 		OK:               false,
 		Tool:             capsuleManifest.Name,
 		Backend:          "local-wasm",
-		CacheHit:         buildResult.CacheHit,
+		CacheHit:         baseRecord.CacheHit,
 		SourceHash:       sourceHash,
 		WASMHash:         capsuleManifest.Capsule.WASMHash,
 		DurationMS:       wasmResult.DurationMS,
@@ -188,7 +195,7 @@ func Run(toolDir, inputPath string, opts Options) (Result, error) {
 	res.Output = output
 	baseRecord.Output = output
 
-	if err := schema.ValidateFile(filepath.Join(buildResult.CapsuleDir, capsuleManifest.OutputSchema), output); err != nil {
+	if err := schema.ValidateFile(filepath.Join(capsuleDir, capsuleManifest.OutputSchema), output); err != nil {
 		res.ErrorType = "output_schema_validation_failed"
 		res.Error = err.Error()
 		baseRecord.ErrorType = res.ErrorType
@@ -211,6 +218,29 @@ func Run(toolDir, inputPath string, opts Options) (Result, error) {
 		return res, err
 	}
 	return res, nil
+}
+
+func toolSourceHash(toolDir string, m manifest.Manifest) (string, error) {
+	if m.Capsule.SourceHash != "" {
+		return m.Capsule.SourceHash, nil
+	}
+	return cache.SourceHash(toolDir)
+}
+
+func isPrebuiltCapsule(toolDir string, m manifest.Manifest) bool {
+	if m.Runtime != "wasm" || m.Module == "" {
+		return false
+	}
+	if _, err := os.Stat(filepath.Join(toolDir, m.Module)); err != nil {
+		return false
+	}
+	if _, err := os.Stat(filepath.Join(toolDir, m.InputSchema)); err != nil {
+		return false
+	}
+	if _, err := os.Stat(filepath.Join(toolDir, m.OutputSchema)); err != nil {
+		return false
+	}
+	return true
 }
 
 func runDockerFallback(toolDir string, m manifest.Manifest, inputData []byte, input any, sourceHash string, baseRecord record) (Result, error) {

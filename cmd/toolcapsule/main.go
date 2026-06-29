@@ -16,6 +16,7 @@ import (
 	"toolcapsule/internal/doctor"
 	"toolcapsule/internal/httpserver"
 	"toolcapsule/internal/mcp"
+	"toolcapsule/internal/plugins"
 	"toolcapsule/internal/recorder"
 	"toolcapsule/internal/replay"
 	"toolcapsule/internal/report"
@@ -63,6 +64,12 @@ func run(args []string) error {
 		return reportCmd(args[2:])
 	case "bundle":
 		return bundleCmd(args[2:])
+	case "verify":
+		return verifyCmd(args[2:])
+	case "keygen":
+		return keygenCmd(args[2:])
+	case "plugin":
+		return pluginCmd(args[2:])
 	case "dashboard":
 		return dashboardCmd(args[2:])
 	case "mcp":
@@ -92,7 +99,10 @@ func usageTo(w *os.File) {
 	fmt.Fprintln(w, "  toolcapsule serve --http <addr> <tools-root> [--fallback docker]")
 	fmt.Fprintln(w, "  toolcapsule replay [run-log.jsonl] [--run-id <id>|--latest-failed]")
 	fmt.Fprintln(w, "  toolcapsule report [run-log.jsonl] [--html] --out <report.md|report.html>")
-	fmt.Fprintln(w, "  toolcapsule bundle [run-log.jsonl] [--run-id <id>] --out <run.tcbundle>")
+	fmt.Fprintln(w, "  toolcapsule bundle [run-log.jsonl] [--run-id <id>] --out <run.tcbundle> [--sign --key <key.json>]")
+	fmt.Fprintln(w, "  toolcapsule verify <run.tcbundle> [--pubkey <pub.json>]")
+	fmt.Fprintln(w, "  toolcapsule keygen --out <key.json> [--pub-out <pub.json>]")
+	fmt.Fprintln(w, "  toolcapsule plugin install|list|inspect|remove|run <args>")
 	fmt.Fprintln(w, "  toolcapsule dashboard [run-log.jsonl] [--addr 127.0.0.1:8787]")
 	fmt.Fprintln(w, "  toolcapsule mcp serve|print-config|install <args>")
 	fmt.Fprintln(w, "  toolcapsule cache list|inspect <source_hash>|clean")
@@ -241,7 +251,7 @@ func runCmd(args []string) error {
 		return fmt.Errorf("run requires --input")
 	}
 
-	result, err := runner.Run(toolDir, input, runner.Options{ForceBuild: forceBuild, Fallback: fallback})
+	result, err := runner.Run(resolveToolRef(toolDir), input, runner.Options{ForceBuild: forceBuild, Fallback: fallback})
 	if err != nil {
 		return err
 	}
@@ -525,42 +535,50 @@ func parseDashboardArgs(args []string) (string, string, error) {
 }
 
 func bundleCmd(args []string) error {
-	logPath, runID, out, err := parseBundleArgs(args)
+	logPath, opts, err := parseBundleArgs(args)
 	if err != nil {
 		return err
 	}
-	result, err := bundle.Create(logPath, bundle.Options{RunID: runID, Out: out})
+	result, err := bundle.Create(logPath, opts)
 	if err != nil {
 		return err
 	}
 	return printJSON(result)
 }
 
-func parseBundleArgs(args []string) (string, string, string, error) {
+func parseBundleArgs(args []string) (string, bundle.Options, error) {
 	var logPath string
-	var runID string
-	var out string
+	var opts bundle.Options
+	var signRequested bool
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		switch arg {
 		case "--run-id":
 			if i+1 >= len(args) {
-				return "", "", "", fmt.Errorf("--run-id requires a value")
+				return "", opts, fmt.Errorf("--run-id requires a value")
 			}
-			runID = args[i+1]
+			opts.RunID = args[i+1]
 			i++
 		case "--out":
 			if i+1 >= len(args) {
-				return "", "", "", fmt.Errorf("--out requires a value")
+				return "", opts, fmt.Errorf("--out requires a value")
 			}
-			out = args[i+1]
+			opts.Out = args[i+1]
 			i++
+		case "--sign-key", "--key":
+			if i+1 >= len(args) {
+				return "", opts, fmt.Errorf("%s requires a value", arg)
+			}
+			opts.SignKey = args[i+1]
+			i++
+		case "--sign":
+			signRequested = true
 		default:
 			if strings.HasPrefix(arg, "-") {
-				return "", "", "", fmt.Errorf("unknown bundle flag %q", arg)
+				return "", opts, fmt.Errorf("unknown bundle flag %q", arg)
 			}
 			if logPath != "" {
-				return "", "", "", fmt.Errorf("bundle accepts one <run-log.jsonl>")
+				return "", opts, fmt.Errorf("bundle accepts one <run-log.jsonl>")
 			}
 			logPath = arg
 		}
@@ -568,7 +586,212 @@ func parseBundleArgs(args []string) (string, string, string, error) {
 	if logPath == "" {
 		logPath = recorder.LatestPath()
 	}
-	return logPath, runID, out, nil
+	if signRequested && opts.SignKey == "" {
+		return "", opts, fmt.Errorf("--sign requires --key or --sign-key")
+	}
+	return logPath, opts, nil
+}
+
+func verifyCmd(args []string) error {
+	bundlePath, pubkey, err := parseVerifyArgs(args)
+	if err != nil {
+		return err
+	}
+	result, err := bundle.VerifyBundle(bundlePath, bundle.VerifyOptions{PublicKey: pubkey})
+	if err != nil {
+		return err
+	}
+	return printJSON(result)
+}
+
+func parseVerifyArgs(args []string) (string, string, error) {
+	var bundlePath string
+	var pubkey string
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch arg {
+		case "--pubkey":
+			if i+1 >= len(args) {
+				return "", "", fmt.Errorf("--pubkey requires a value")
+			}
+			pubkey = args[i+1]
+			i++
+		default:
+			if strings.HasPrefix(arg, "-") {
+				return "", "", fmt.Errorf("unknown verify flag %q", arg)
+			}
+			if bundlePath != "" {
+				return "", "", fmt.Errorf("verify accepts one <run.tcbundle>")
+			}
+			bundlePath = arg
+		}
+	}
+	if bundlePath == "" {
+		return "", "", fmt.Errorf("verify requires <run.tcbundle>")
+	}
+	return bundlePath, pubkey, nil
+}
+
+func keygenCmd(args []string) error {
+	var opts bundle.KeygenOptions
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch arg {
+		case "--out":
+			if i+1 >= len(args) {
+				return fmt.Errorf("--out requires a value")
+			}
+			opts.Out = args[i+1]
+			i++
+		case "--pub-out":
+			if i+1 >= len(args) {
+				return fmt.Errorf("--pub-out requires a value")
+			}
+			opts.PubOut = args[i+1]
+			i++
+		default:
+			return fmt.Errorf("unknown keygen argument %q", arg)
+		}
+	}
+	result, err := bundle.GenerateKeyPair(opts)
+	if err != nil {
+		return err
+	}
+	return printJSON(result)
+}
+
+func pluginCmd(args []string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("plugin supports: install <bundle>, list, inspect <name>, remove <name>, run <name> --input <input.json>")
+	}
+	switch args[0] {
+	case "install":
+		bundlePath, opts, err := parsePluginInstallArgs(args[1:])
+		if err != nil {
+			return err
+		}
+		result, err := plugins.Install(bundlePath, opts)
+		if err != nil {
+			return err
+		}
+		return printJSON(result)
+	case "list":
+		if len(args) != 1 {
+			return fmt.Errorf("plugin list accepts no extra arguments")
+		}
+		result, err := plugins.List()
+		if err != nil {
+			return err
+		}
+		return printJSON(result)
+	case "inspect":
+		if len(args) != 2 {
+			return fmt.Errorf("plugin inspect requires <name>")
+		}
+		result, err := plugins.Inspect(args[1])
+		if err != nil {
+			return err
+		}
+		return printJSON(result)
+	case "remove":
+		if len(args) != 2 {
+			return fmt.Errorf("plugin remove requires <name>")
+		}
+		result, err := plugins.Remove(args[1])
+		if err != nil {
+			return err
+		}
+		return printJSON(result)
+	case "run":
+		name, input, err := parsePluginRunArgs(args[1:])
+		if err != nil {
+			return err
+		}
+		result, err := plugins.Run(name, plugins.RunOptions{Input: input})
+		if err != nil {
+			return err
+		}
+		return printJSON(result)
+	default:
+		return fmt.Errorf("unknown plugin command %q", args[0])
+	}
+}
+
+func parsePluginInstallArgs(args []string) (string, plugins.InstallOptions, error) {
+	var bundlePath string
+	var opts plugins.InstallOptions
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch arg {
+		case "--pubkey":
+			if i+1 >= len(args) {
+				return "", opts, fmt.Errorf("--pubkey requires a value")
+			}
+			opts.PublicKey = args[i+1]
+			i++
+		case "--name":
+			if i+1 >= len(args) {
+				return "", opts, fmt.Errorf("--name requires a value")
+			}
+			opts.Name = args[i+1]
+			i++
+		case "--allow-unsigned":
+			opts.AllowUnsigned = true
+		default:
+			if strings.HasPrefix(arg, "-") {
+				return "", opts, fmt.Errorf("unknown plugin install flag %q", arg)
+			}
+			if bundlePath != "" {
+				return "", opts, fmt.Errorf("plugin install accepts one <bundle>")
+			}
+			bundlePath = arg
+		}
+	}
+	if bundlePath == "" {
+		return "", opts, fmt.Errorf("plugin install requires <bundle>")
+	}
+	return bundlePath, opts, nil
+}
+
+func parsePluginRunArgs(args []string) (string, string, error) {
+	var name string
+	var input string
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch arg {
+		case "--input":
+			if i+1 >= len(args) {
+				return "", "", fmt.Errorf("--input requires a value")
+			}
+			input = args[i+1]
+			i++
+		default:
+			if strings.HasPrefix(arg, "-") {
+				return "", "", fmt.Errorf("unknown plugin run flag %q", arg)
+			}
+			if name != "" {
+				return "", "", fmt.Errorf("plugin run accepts one <name>")
+			}
+			name = arg
+		}
+	}
+	if name == "" {
+		return "", "", fmt.Errorf("plugin run requires <name>")
+	}
+	if input == "" {
+		return "", "", fmt.Errorf("plugin run requires --input")
+	}
+	return name, input, nil
+}
+
+func resolveToolRef(ref string) string {
+	if _, err := os.Stat(ref); err == nil {
+		return ref
+	}
+	if path, ok := plugins.Resolve(ref); ok {
+		return path
+	}
+	return ref
 }
 
 func mcpCmd(args []string) error {
