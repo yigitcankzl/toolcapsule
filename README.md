@@ -12,7 +12,25 @@ ToolCapsule is a WASM runtime for MCP tools: schema-safe, resource-limited, repl
 
 ## Current Local Workflow
 
-ToolCapsule now provides a local end-to-end workflow for Go tools:
+Fastest path:
+
+```bash
+make build
+./bin/toolcapsule doctor
+./bin/toolcapsule demo
+```
+
+Or install locally:
+
+```bash
+./scripts/install-local.sh
+toolcapsule doctor
+toolcapsule demo
+```
+
+The demo command runs successful tools, expected failures, report generation, and bundle export in one shot. It writes a human-readable HTML report and a replayable bundle under `runs/`.
+
+Manual workflow:
 
 ```bash
 go mod tidy
@@ -21,14 +39,14 @@ go run ./cmd/toolcapsule init /tmp/my_tool --lang go
 go run ./cmd/toolcapsule dev /tmp/my_tool --input /tmp/my_tool/examples/input.json
 go run ./cmd/toolcapsule run ./examples/tools/redact_pii --input examples/inputs/pii.json
 go run ./cmd/toolcapsule run ./examples/tools/redact_pii --input examples/inputs/pii.json
-go run ./cmd/toolcapsule replay runs/20260629.jsonl
-go run ./cmd/toolcapsule report runs/20260629.jsonl --html --out report.html
-go run ./cmd/toolcapsule bundle runs/20260629.jsonl --out run.tcbundle
+go run ./cmd/toolcapsule replay
+go run ./cmd/toolcapsule report --html --out report.html
+go run ./cmd/toolcapsule bundle --out run.tcbundle
 go run ./cmd/toolcapsule replay run.tcbundle
 go run ./cmd/toolcapsule cache list
 ```
 
-The first `run` analyzes the tool, builds it as a WASI WebAssembly module, stores it under `.toolcapsule/cache`, runs it with `wazero`, and writes a JSONL run log under `runs/`.
+The first `run` analyzes the tool, builds it as a WASI WebAssembly module, stores it under `.toolcapsule/cache`, runs it with `wazero`, and writes a JSONL run log under `runs/`. `runs/latest.jsonl` always points to the latest record, so `replay`, `report`, `bundle`, and `dashboard` work without passing a log path.
 
 The second `run` should report `"cache_hit": true` and execute the cached `tool.wasm` instead of rebuilding.
 
@@ -56,6 +74,50 @@ MCP mode exposes discovered manifests as MCP tools:
 go run ./cmd/toolcapsule mcp serve ./examples/tools
 go run ./cmd/toolcapsule mcp print-config ./examples/tools
 go run ./cmd/toolcapsule mcp install claude ./examples/tools
+```
+
+HTTP mode exposes the same tools to backends, CI jobs, or non-MCP agent runtimes:
+
+```bash
+toolcapsule serve --http 127.0.0.1:8080 ./examples/tools
+curl http://127.0.0.1:8080/healthz
+curl http://127.0.0.1:8080/v1/tools
+curl -X POST http://127.0.0.1:8080/v1/tools/parse_csv/call \
+  -H 'Content-Type: application/json' \
+  -d '{"input":{"csv":"a,b\n1,2"}}'
+```
+
+HTTP endpoints:
+
+```text
+GET  /healthz
+GET  /readyz
+GET  /v1
+GET  /v1/tools
+POST /v1/tools/{name}/call
+POST /v1/tools/{name}/run
+GET  /v1/runs/latest
+```
+
+Tool calls accept either `{"input": {...}}`, `{"arguments": {...}}`, or the input object directly.
+
+Recent hardening and language support:
+
+- JSON Schema validation uses `github.com/santhosh-tekuri/jsonschema/v6`, so schemas can use draft features such as `enum`, `pattern`, `minimum`, `oneOf`, and `format`.
+- Local WASM execution applies manifest `limits.memory_mb` through `wazero` memory page limits and terminates execution on context timeout.
+- Go analysis uses AST imports plus `go list` for dependency checks instead of raw string search.
+- Analyzer/build support exists for `go`, `tinygo`, `rust`, and `javascript`/`javy` tools when the matching toolchain is installed.
+- Docker fallback runs with a hardened container profile: read-only source mount, dropped capabilities, `no-new-privileges`, CPU/pid/memory limits, tmpfs build cache, and manifest-controlled network access.
+- MCP stdio server supports deterministic `tools/list`, `tools/call`, `initialize`, and `ping` responses.
+
+Optional toolchain environment variables:
+
+```bash
+TOOLCAPSULE_GO=/path/to/go
+TOOLCAPSULE_TINYGO=/path/to/tinygo
+TOOLCAPSULE_CARGO=/path/to/cargo
+TOOLCAPSULE_JAVY=/path/to/javy
+TOOLCAPSULE_DOCKER_GO_IMAGE=golang:1.22
 ```
 
 Cache entries can be inspected or removed:
