@@ -139,7 +139,8 @@ func Run(logPath string, opts Options) (Result, error) {
 	baseRecord.InputSchemaValid = true
 
 	wasmResult, runErr := wasm.Run(filepath.Join(capsuleDir, capsuleManifest.Module), inputData, wasm.Options{
-		Timeout: time.Duration(capsuleManifest.Limits.TimeoutMS) * time.Millisecond,
+		Timeout:  time.Duration(capsuleManifest.Limits.TimeoutMS) * time.Millisecond,
+		MemoryMB: capsuleManifest.Limits.MemoryMB,
 	})
 	res.DurationMS = wasmResult.DurationMS
 	baseRecord.DurationMS = wasmResult.DurationMS
@@ -214,7 +215,7 @@ func runBundle(path string) (Result, error) {
 	}
 	res.InputSchemaValid = true
 	baseRecord.InputSchemaValid = true
-	wasmResult, runErr := wasm.Run(filepath.Join(extracted.Dir, capsuleManifest.Module), inputData, wasm.Options{Timeout: time.Duration(capsuleManifest.Limits.TimeoutMS) * time.Millisecond})
+	wasmResult, runErr := wasm.Run(filepath.Join(extracted.Dir, capsuleManifest.Module), inputData, wasm.Options{Timeout: time.Duration(capsuleManifest.Limits.TimeoutMS) * time.Millisecond, MemoryMB: capsuleManifest.Limits.MemoryMB})
 	res.DurationMS = wasmResult.DurationMS
 	baseRecord.DurationMS = wasmResult.DurationMS
 	baseRecord.Stdout = wasmResult.Stdout

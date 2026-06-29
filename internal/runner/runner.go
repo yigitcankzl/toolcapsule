@@ -139,7 +139,8 @@ func Run(toolDir, inputPath string, opts Options) (Result, error) {
 	}
 	wasmPath := filepath.Join(buildResult.CapsuleDir, capsuleManifest.Module)
 	wasmResult, runErr := wasm.Run(wasmPath, inputData, wasm.Options{
-		Timeout: time.Duration(capsuleManifest.Limits.TimeoutMS) * time.Millisecond,
+		Timeout:  time.Duration(capsuleManifest.Limits.TimeoutMS) * time.Millisecond,
+		MemoryMB: capsuleManifest.Limits.MemoryMB,
 	})
 
 	baseRecord.CacheHit = buildResult.CacheHit
@@ -223,7 +224,11 @@ func runDockerFallback(toolDir string, m manifest.Manifest, inputData []byte, in
 		SourceHash:       sourceHash,
 		InputSchemaValid: true,
 	}
-	dockerResult, runErr := docker.RunGoTool(toolDir, inputData, docker.Options{Timeout: time.Duration(m.Limits.TimeoutMS) * time.Millisecond})
+	dockerResult, runErr := docker.RunGoTool(toolDir, inputData, docker.Options{
+		Timeout:  time.Duration(m.Limits.TimeoutMS) * time.Millisecond,
+		MemoryMB: m.Limits.MemoryMB,
+		Network:  m.Permissions.Network,
+	})
 	res.DurationMS = dockerResult.DurationMS
 	baseRecord.DurationMS = dockerResult.DurationMS
 	baseRecord.Stdout = dockerResult.Stdout

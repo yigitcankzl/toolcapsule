@@ -26,6 +26,9 @@ func Run() Result {
 	checks := []Check{
 		checkGo(),
 		checkWasip1(),
+		checkOptionalBinary("tinygo", "TOOLCAPSULE_TINYGO", "tinygo", "needed for language: tinygo"),
+		checkOptionalBinary("cargo", "TOOLCAPSULE_CARGO", "cargo", "needed for language: rust"),
+		checkOptionalBinary("javy", "TOOLCAPSULE_JAVY", "javy", "needed for language: javascript"),
 		checkCache(),
 		checkDocker(),
 		checkMCPConfig("claude", filepath.Join(homeDir(), ".config", "Claude", "claude_desktop_config.json")),
@@ -33,7 +36,7 @@ func Run() Result {
 	}
 	ok := true
 	for _, check := range checks {
-		if !check.OK && check.Name != "docker" && !strings.HasPrefix(check.Name, "mcp_config_") {
+		if !check.OK && check.Name != "docker" && check.Name != "tinygo" && check.Name != "cargo" && check.Name != "javy" && !strings.HasPrefix(check.Name, "mcp_config_") {
 			ok = false
 		}
 	}
@@ -97,6 +100,22 @@ func checkDocker() Check {
 		return Check{Name: "docker", OK: false, Detail: err.Error(), Hint: "Docker is only needed for --fallback docker"}
 	}
 	return Check{Name: "docker", OK: true, Detail: strings.TrimSpace(out), Command: path + " --version"}
+}
+
+func checkOptionalBinary(name, env, fallback, hint string) Check {
+	bin := os.Getenv(env)
+	if bin == "" {
+		bin = fallback
+	}
+	path, err := exec.LookPath(bin)
+	if err != nil {
+		return Check{Name: name, OK: false, Detail: fallback + " not found", Hint: hint}
+	}
+	out, err := runCommand(path, "--version")
+	if err != nil {
+		return Check{Name: name, OK: false, Detail: err.Error(), Hint: hint}
+	}
+	return Check{Name: name, OK: true, Detail: strings.TrimSpace(out), Command: path + " --version"}
 }
 
 func checkMCPConfig(client, path string) Check {

@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"toolcapsule/internal/manifest"
@@ -72,6 +73,7 @@ func Serve(opts ServerOptions) error {
 
 	enc := json.NewEncoder(opts.Stdout)
 	scanner := bufio.NewScanner(opts.Stdin)
+	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
@@ -82,7 +84,7 @@ func Serve(opts ServerOptions) error {
 			_ = enc.Encode(errorResponse(nil, -32700, err.Error()))
 			continue
 		}
-		if req.ID == nil && strings.HasPrefix(req.Method, "notifications/") {
+		if req.ID == nil && (strings.HasPrefix(req.Method, "notifications/") || req.Method == "initialized") {
 			continue
 		}
 		resp := handle(req, tools, byName)
@@ -135,6 +137,7 @@ func Discover(root string) ([]Tool, error) {
 	if err != nil {
 		return nil, err
 	}
+	sort.Slice(tools, func(i, j int) bool { return tools[i].Name < tools[j].Name })
 	return tools, nil
 }
 
@@ -221,6 +224,8 @@ func handle(req request, tools []Tool, byName map[string]Tool) response {
 			"capabilities":    map[string]any{"tools": map[string]any{"listChanged": false}},
 			"serverInfo":      map[string]any{"name": "toolcapsule", "version": "0.1.0"},
 		}}
+	case "ping":
+		return response{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{}}
 	case "tools/list":
 		publicTools := make([]Tool, 0, len(tools))
 		for _, tool := range tools {

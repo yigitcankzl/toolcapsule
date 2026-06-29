@@ -132,7 +132,7 @@ func Save(projectRoot, toolDir, sourceHash, wasmPath string, m manifest.Manifest
 	m.Capsule.SourceHash = sourceHash
 	m.Capsule.WASMHash = wasmHash
 	m.Capsule.BuiltAt = builtAt
-	m.Capsule.Builder = "go-wasip1-local"
+	m.Capsule.Builder = builderName(m.Language)
 	m.Capsule.ToolCapsuleVersion = Version
 
 	if err := copyFile(filepath.Join(tmpDir, m.InputSchema), filepath.Join(toolDir, sourceInputSchema)); err != nil {
@@ -273,4 +273,17 @@ func copyFile(dst, src string) error {
 		return err
 	}
 	return out.Close()
+}
+
+func builderName(language string) string {
+	switch strings.ToLower(language) {
+	case "tinygo":
+		return "tinygo-wasi-local"
+	case "rust", "rs":
+		return "rust-wasm32-wasip1-local"
+	case "js", "javascript", "javy":
+		return "javy-wasi-local"
+	default:
+		return "go-wasip1-local"
+	}
 }

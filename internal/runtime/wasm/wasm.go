@@ -12,7 +12,8 @@ import (
 )
 
 type Options struct {
-	Timeout time.Duration
+	Timeout  time.Duration
+	MemoryMB int
 }
 
 type Result struct {
@@ -37,7 +38,11 @@ func Run(wasmPath string, input []byte, opts Options) (Result, error) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	started := time.Now()
-	runtime := wazero.NewRuntime(ctx)
+	runtimeConfig := wazero.NewRuntimeConfig().WithCloseOnContextDone(true)
+	if opts.MemoryMB > 0 {
+		runtimeConfig = runtimeConfig.WithMemoryLimitPages(memoryLimitPages(opts.MemoryMB))
+	}
+	runtime := wazero.NewRuntimeWithConfig(ctx, runtimeConfig)
 	defer runtime.Close(ctx)
 
 	wasi_snapshot_preview1.MustInstantiate(ctx, runtime)
@@ -62,4 +67,19 @@ func Run(wasmPath string, input []byte, opts Options) (Result, error) {
 		return result, err
 	}
 	return result, nil
+}
+
+func memoryLimitPages(memoryMB int) uint32 {
+	bytes := uint64(memoryMB) * 1024 * 1024
+	pages := bytes / 65536
+	if bytes%65536 != 0 {
+		pages++
+	}
+	if pages == 0 {
+		pages = 1
+	}
+	if pages > 65536 {
+		pages = 65536
+	}
+	return uint32(pages)
 }
