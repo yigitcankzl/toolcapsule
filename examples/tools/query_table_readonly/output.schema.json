@@ -1,0 +1,19 @@
+{
+  "type": "object",
+  "required": ["table", "count", "limited", "rows"],
+  "additionalProperties": false,
+  "properties": {
+    "table": { "type": "string" },
+    "count": { "type": "integer", "minimum": 0 },
+    "limited": { "type": "boolean" },
+    "rows": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": {
+          "type": ["string", "number", "boolean", "null"]
+        }
+      }
+    }
+  }
+}

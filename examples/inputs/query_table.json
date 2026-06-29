@@ -1,0 +1,9 @@
+{
+  "table": "tickets",
+  "select": ["id", "customer_id", "severity", "status"],
+  "where": {
+    "severity": "high",
+    "status": "open"
+  },
+  "limit": 5
+}

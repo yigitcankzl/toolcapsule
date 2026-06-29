@@ -61,6 +61,9 @@ func Run(opts Options) (Result, error) {
 	if err := run("validate json", "examples/tools/validate_json", "examples/inputs/validate_json.json", false); err != nil {
 		return Result{}, err
 	}
+	if err := run("query readonly table", "examples/tools/query_table_readonly", "examples/inputs/query_table.json", false); err != nil {
+		return Result{}, err
+	}
 	if err := run("reject invalid input", "examples/tools/redact_pii", "examples/inputs/invalid_schema.json", true); err != nil {
 		return Result{}, err
 	}
