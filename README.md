@@ -1,8 +1,8 @@
 # ToolCapsule
 
-**Portable, local-first runtime for AI agent tools.**
+**A WebAssembly runtime for AI agent tools.**
 
-Build tools once. Run them as CLI, MCP, HTTP, or automation jobs with JSON Schema validation, sandboxed execution, replayable logs, and reports.
+Compile each agent tool to a WASI WebAssembly capsule and run it behind a JSON Schema contract: sandboxed, with timeout and memory limits, sub-100ms cold start, replayable logs, and reports. Build the tool once; run it as CLI, MCP, HTTP, or an automation job. Tools that genuinely need a full OS fall back to a hardened Docker backend behind the same contract.
 
 ```text
 tool source + manifest
@@ -16,7 +16,7 @@ tool source + manifest
         +-- CI / automation
 ```
 
-ToolCapsule is local-first, not local-only. It can run on a developer machine, inside CI, in a Docker container, or as an internal HTTP tool gateway. The first execution backend is WASI WebAssembly through `wazero`; tools that are not a good WASM fit can use the Docker fallback path behind the same validation, logging, replay, and reporting layer.
+WebAssembly is the point: a capsule is a single portable artifact that runs the same on a laptop, in CI, in a container, or in a cloud sandbox — no per-tool image, no language runtime to ship. The primary execution backend is WASI WebAssembly through `wazero`, with a persistent compilation cache so warm capsules start in tens of milliseconds. Tools that are not a good WASM fit (network, full filesystem) fall back to a hardened Docker path behind the same validation, logging, replay, and reporting layer.
 
 ## Why
 
@@ -288,6 +288,18 @@ Current hardening:
 - WASM runs through `wazero` with timeout and memory page limits.
 - Go analysis uses AST imports plus `go list -deps`.
 - Docker fallback uses read-only source mounts, dropped capabilities, `no-new-privileges`, CPU/pid/memory limits, tmpfs build cache, and manifest-controlled network access.
+
+### Cold Start
+
+WebAssembly is chosen for isolation *and* startup cost. A warm capsule executes in tens of milliseconds; the equivalent OS-level sandbox is orders of magnitude slower.
+
+| Backend | Per-call latency | Notes |
+|---|---|---|
+| `local-wasm`, first run | ~740 ms | wazero compiles the Go wasm module |
+| `local-wasm`, warm (compilation cache) | **~53 ms** | compiled module persisted per capsule |
+| `docker-sandbox` | ~27 s | builds and runs the Go tool in a container |
+
+Measured locally on the `parse_csv` example (Go → `wasip1`, `go1.24`). The warm number comes from a persistent `wazero` compilation cache stored beside each capsule, so the module is compiled once and reused across processes. TinyGo capsules are smaller again and start faster still.
 
 Optional toolchain environment variables:
 

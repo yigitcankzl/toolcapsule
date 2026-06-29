@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/tetratelabs/wazero"
@@ -41,6 +42,13 @@ func Run(wasmPath string, input []byte, opts Options) (Result, error) {
 	runtimeConfig := wazero.NewRuntimeConfig().WithCloseOnContextDone(true)
 	if opts.MemoryMB > 0 {
 		runtimeConfig = runtimeConfig.WithMemoryLimitPages(memoryLimitPages(opts.MemoryMB))
+	}
+	// Persist wazero's compiled module next to the capsule so cold starts skip
+	// recompiling the (large) Go wasm module on every run.
+	// This stays per-capsule; switch to a shared dir if disk dedup matters.
+	if cache, cacheErr := wazero.NewCompilationCacheWithDir(filepath.Join(filepath.Dir(wasmPath), "wazero")); cacheErr == nil {
+		runtimeConfig = runtimeConfig.WithCompilationCache(cache)
+		defer cache.Close(ctx)
 	}
 	runtime := wazero.NewRuntimeWithConfig(ctx, runtimeConfig)
 	defer runtime.Close(ctx)
