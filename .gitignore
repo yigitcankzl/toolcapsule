@@ -1,0 +1,8 @@
+.toolcapsule/
+runs/
+dist/
+*.wasm
+/toolcapsule
+*.tcbundle
+report.md
+report.html
