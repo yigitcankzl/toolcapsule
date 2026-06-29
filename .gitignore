@@ -1,6 +1,7 @@
 .toolcapsule/
 runs/
 dist/
+bin/
 *.wasm
 /toolcapsule
 *.tcbundle

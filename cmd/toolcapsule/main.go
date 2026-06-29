@@ -11,9 +11,12 @@ import (
 	"toolcapsule/internal/builder"
 	"toolcapsule/internal/bundle"
 	"toolcapsule/internal/cache"
+	"toolcapsule/internal/demo"
 	"toolcapsule/internal/dev"
 	"toolcapsule/internal/doctor"
+	"toolcapsule/internal/httpserver"
 	"toolcapsule/internal/mcp"
+	"toolcapsule/internal/recorder"
 	"toolcapsule/internal/replay"
 	"toolcapsule/internal/report"
 	"toolcapsule/internal/runner"
@@ -32,12 +35,18 @@ func run(args []string) error {
 		usage()
 		return fmt.Errorf("missing command")
 	}
+	if args[1] == "--help" || args[1] == "-h" || args[1] == "help" {
+		usageTo(os.Stdout)
+		return nil
+	}
 
 	switch args[1] {
 	case "init":
 		return initCmd(args[2:])
 	case "doctor":
 		return doctorCmd(args[2:])
+	case "demo":
+		return demoCmd(args[2:])
 	case "dev":
 		return devCmd(args[2:])
 	case "analyze":
@@ -46,6 +55,8 @@ func run(args []string) error {
 		return buildCmd(args[2:])
 	case "run":
 		return runCmd(args[2:])
+	case "serve":
+		return serveCmd(args[2:])
 	case "replay":
 		return replayCmd(args[2:])
 	case "report":
@@ -65,19 +76,26 @@ func run(args []string) error {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage:")
-	fmt.Fprintln(os.Stderr, "  toolcapsule init <tool-dir> [--lang go]")
-	fmt.Fprintln(os.Stderr, "  toolcapsule doctor")
-	fmt.Fprintln(os.Stderr, "  toolcapsule dev <tool-dir> --input <input.json>")
-	fmt.Fprintln(os.Stderr, "  toolcapsule analyze <tool-dir>")
-	fmt.Fprintln(os.Stderr, "  toolcapsule build <tool-dir>")
-	fmt.Fprintln(os.Stderr, "  toolcapsule run <tool-dir> --input <input.json>")
-	fmt.Fprintln(os.Stderr, "  toolcapsule replay <run-log.jsonl> [--run-id <id>|--latest-failed]")
-	fmt.Fprintln(os.Stderr, "  toolcapsule report <run-log.jsonl> [--html] --out <report.md|report.html>")
-	fmt.Fprintln(os.Stderr, "  toolcapsule bundle <run-log.jsonl> [--run-id <id>] --out <run.tcbundle>")
-	fmt.Fprintln(os.Stderr, "  toolcapsule dashboard <run-log.jsonl> [--addr 127.0.0.1:8787]")
-	fmt.Fprintln(os.Stderr, "  toolcapsule mcp serve|print-config|install <args>")
-	fmt.Fprintln(os.Stderr, "  toolcapsule cache list|inspect <source_hash>|clean")
+	usageTo(os.Stderr)
+
+}
+
+func usageTo(w *os.File) {
+	fmt.Fprintln(w, "usage:")
+	fmt.Fprintln(w, "  toolcapsule init <tool-dir> [--lang go]")
+	fmt.Fprintln(w, "  toolcapsule doctor")
+	fmt.Fprintln(w, "  toolcapsule demo [--report-out runs/demo-report.html] [--bundle-out runs/demo.tcbundle]")
+	fmt.Fprintln(w, "  toolcapsule dev <tool-dir> --input <input.json>")
+	fmt.Fprintln(w, "  toolcapsule analyze <tool-dir>")
+	fmt.Fprintln(w, "  toolcapsule build <tool-dir>")
+	fmt.Fprintln(w, "  toolcapsule run <tool-dir> --input <input.json>")
+	fmt.Fprintln(w, "  toolcapsule serve --http <addr> <tools-root> [--fallback docker]")
+	fmt.Fprintln(w, "  toolcapsule replay [run-log.jsonl] [--run-id <id>|--latest-failed]")
+	fmt.Fprintln(w, "  toolcapsule report [run-log.jsonl] [--html] --out <report.md|report.html>")
+	fmt.Fprintln(w, "  toolcapsule bundle [run-log.jsonl] [--run-id <id>] --out <run.tcbundle>")
+	fmt.Fprintln(w, "  toolcapsule dashboard [run-log.jsonl] [--addr 127.0.0.1:8787]")
+	fmt.Fprintln(w, "  toolcapsule mcp serve|print-config|install <args>")
+	fmt.Fprintln(w, "  toolcapsule cache list|inspect <source_hash>|clean")
 }
 
 func initCmd(args []string) error {
@@ -129,6 +147,23 @@ func doctorCmd(args []string) error {
 		return fmt.Errorf("doctor accepts no arguments")
 	}
 	return printJSON(doctor.Run())
+}
+
+func demoCmd(args []string) error {
+	fs := flag.NewFlagSet("demo", flag.ContinueOnError)
+	reportOut := fs.String("report-out", "", "HTML report output path")
+	bundleOut := fs.String("bundle-out", "", "bundle output path")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return fmt.Errorf("demo accepts no positional arguments")
+	}
+	result, err := demo.Run(demo.Options{ReportOut: *reportOut, BundleOut: *bundleOut})
+	if err != nil {
+		return err
+	}
+	return printJSON(result)
 }
 
 func devCmd(args []string) error {
@@ -251,6 +286,53 @@ func parseRunArgs(args []string) (string, string, bool, string, error) {
 	return toolDir, input, forceBuild, fallback, nil
 }
 
+func serveCmd(args []string) error {
+	toolsRoot, addr, fallback, err := parseServeArgs(args)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(os.Stderr, httpserver.StartedMessage(addr))
+	return httpserver.Serve(httpserver.Options{Addr: addr, ToolsRoot: toolsRoot, Fallback: fallback})
+}
+
+func parseServeArgs(args []string) (string, string, string, error) {
+	var toolsRoot string
+	var addr string
+	var fallback string
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch arg {
+		case "--http":
+			if i+1 >= len(args) {
+				return "", "", "", fmt.Errorf("--http requires a value")
+			}
+			addr = args[i+1]
+			i++
+		case "--fallback":
+			if i+1 >= len(args) {
+				return "", "", "", fmt.Errorf("--fallback requires a value")
+			}
+			fallback = args[i+1]
+			i++
+		default:
+			if strings.HasPrefix(arg, "-") {
+				return "", "", "", fmt.Errorf("unknown serve flag %q", arg)
+			}
+			if toolsRoot != "" {
+				return "", "", "", fmt.Errorf("serve accepts one <tools-root>")
+			}
+			toolsRoot = arg
+		}
+	}
+	if addr == "" {
+		return "", "", "", fmt.Errorf("serve requires --http <addr>")
+	}
+	if toolsRoot == "" {
+		return "", "", "", fmt.Errorf("serve requires <tools-root>")
+	}
+	return toolsRoot, httpserver.NormalizeAddr(addr), fallback, nil
+}
+
 func cacheCmd(args []string) error {
 	fs := flag.NewFlagSet("cache", flag.ContinueOnError)
 	if err := fs.Parse(args); err != nil {
@@ -334,7 +416,7 @@ func parseReplayArgs(args []string) (string, replay.Options, error) {
 		}
 	}
 	if logPath == "" {
-		return "", opts, fmt.Errorf("replay requires <run-log.jsonl>")
+		logPath = recorder.LatestPath()
 	}
 	return logPath, opts, nil
 }
@@ -400,7 +482,7 @@ func parseReportArgs(args []string) (string, string, bool, error) {
 		}
 	}
 	if logPath == "" {
-		return "", "", false, fmt.Errorf("report requires <run-log.jsonl>")
+		logPath = recorder.LatestPath()
 	}
 	return logPath, outPath, html, nil
 }
@@ -437,7 +519,7 @@ func parseDashboardArgs(args []string) (string, string, error) {
 		}
 	}
 	if logPath == "" {
-		return "", "", fmt.Errorf("dashboard requires <run-log.jsonl>")
+		logPath = recorder.LatestPath()
 	}
 	return logPath, addr, nil
 }
@@ -484,7 +566,7 @@ func parseBundleArgs(args []string) (string, string, string, error) {
 		}
 	}
 	if logPath == "" {
-		return "", "", "", fmt.Errorf("bundle requires <run-log.jsonl>")
+		logPath = recorder.LatestPath()
 	}
 	return logPath, runID, out, nil
 }
