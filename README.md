@@ -166,6 +166,34 @@ ToolCapsule records every run as JSONL. `runs/latest.jsonl` points to the latest
 ./bin/toolcapsule replay run.tcbundle
 ```
 
+### Signed Plugins
+
+Capsules can be signed, verified, installed, and run by name. This is the first step toward a shareable plugin system for agent tools.
+
+Create a signing key:
+
+```bash
+./bin/toolcapsule keygen --out /tmp/toolcapsule.key --pub-out /tmp/toolcapsule.pub
+```
+
+Build a run record, export a signed bundle, and verify it:
+
+```bash
+./bin/toolcapsule run ./examples/tools/parse_csv --input examples/inputs/csv.json
+./bin/toolcapsule bundle --out /tmp/parse_csv.tcbundle --sign --key /tmp/toolcapsule.key
+./bin/toolcapsule verify /tmp/parse_csv.tcbundle --pubkey /tmp/toolcapsule.pub
+```
+
+Install and run the bundle as a plugin:
+
+```bash
+./bin/toolcapsule plugin install /tmp/parse_csv.tcbundle --pubkey /tmp/toolcapsule.pub
+./bin/toolcapsule plugin list
+./bin/toolcapsule run parse_csv --input examples/inputs/csv.json
+```
+
+Plugins install under `~/.toolcapsule/plugins` by default. Set `TOOLCAPSULE_HOME` to use a different plugin home in tests or sandboxes.
+
 ### Automation Or CI
 
 ToolCapsule can be used in automation even before a dedicated GitHub Action exists:
