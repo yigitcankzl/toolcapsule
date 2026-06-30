@@ -1,38 +1,127 @@
 # ToolCapsule
 
-**A WebAssembly runtime for AI agent tools.**
+**A runtime and gateway for safer AI agent tools.**
 
-Compile each agent tool to a WASI WebAssembly capsule and run it behind a JSON Schema contract: sandboxed, with timeout and memory limits, sub-100ms cold start, replayable logs, and reports. Build the tool once; run it as CLI, MCP, HTTP, or an automation job. Tools that genuinely need a full OS fall back to a hardened Docker backend behind the same contract.
+ToolCapsule helps teams expose internal scripts, data lookups, security utilities, and automation tools to AI agents without giving the agent raw shell, database, or arbitrary code access.
+
+The core idea is simple: wrap every tool with a manifest, JSON Schema contracts, sandboxed execution, replayable logs, reports, and MCP/HTTP interfaces.
 
 ```text
-tool source + manifest
+Claude Code / MCP client / backend / CI
         |
         v
-  ToolCapsule runtime
+ToolCapsule gateway
         |
-        +-- CLI
-        +-- MCP server
-        +-- HTTP server
-        +-- CI / automation
+        +-- validate input schema
+        +-- run a WASM capsule or Docker fallback
+        +-- validate output schema
+        +-- write replay logs and reports
+        v
+Internal tools and data utilities
 ```
 
-WebAssembly is the point: a capsule is a single portable artifact that runs the same on a laptop, in CI, in a container, or in a cloud sandbox — no per-tool image, no language runtime to ship. The primary execution backend is WASI WebAssembly through `wazero`, with a persistent compilation cache so warm capsules start in tens of milliseconds. Tools that are not a good WASM fit (network, full filesystem) fall back to a hardened Docker path behind the same validation, logging, replay, and reporting layer.
+Build a tool once. Run it as CLI, MCP, HTTP, automation, or a signed plugin.
 
-## Why
+## Common Industry Use Cases
 
-AI agents increasingly call tools through MCP, function calling, or custom APIs. That is useful, but raw tool execution is hard to trust and debug.
+### Internal MCP Tool Gateway
 
-ToolCapsule gives each tool a contract and execution envelope:
+Most teams already have useful scripts and small internal tools:
 
-- Validate tool input before execution.
-- Run suitable tools in a WASM sandbox with timeout and memory limits.
-- Validate tool output before returning it to the agent.
-- Record every call as replayable JSONL.
-- Generate HTML reports for debugging.
-- Expose the same tool through CLI, MCP, or HTTP.
-- Use Docker fallback for tools that need a fuller OS runtime.
+```text
+query_customer
+search_logs
+create_ticket
+redact_pii
+validate_json
+parse_csv
+run_policy_check
+```
 
-The short version:
+Exposing those directly to Claude Code, Cursor, Cline, OpenCode, or another agent is risky. ToolCapsule sits between the agent and the tools:
+
+```text
+Agent -> MCP -> ToolCapsule -> validated, sandboxed, replayable tool execution
+```
+
+The agent sees normal MCP tools. The platform team gets schemas, sandboxing, logs, replay, and reports.
+
+### Controlled Internal Data Access
+
+Instead of giving an agent raw SQL, shell access, or broad API credentials, expose narrow read-only tools.
+
+Example request:
+
+```json
+{
+  "table": "tickets",
+  "select": ["id", "customer_id", "severity", "status"],
+  "where": {
+    "severity": "high",
+    "status": "open"
+  },
+  "limit": 5
+}
+```
+
+ToolCapsule validates the shape, runs the tool in a bounded backend, validates the output, and records the call. The agent can answer questions over internal data without getting arbitrary database access.
+
+### Agent Tool Debugging
+
+When an agent tool fails, teams need to know:
+
+- What exact input did the agent send?
+- Did the input pass schema validation?
+- Did the tool timeout or fail during execution?
+- What stdout, stderr, duration, hashes, and backend were involved?
+- Can the call be replayed?
+
+ToolCapsule records each call as JSONL and can replay or report it:
+
+```bash
+./bin/toolcapsule replay
+./bin/toolcapsule report --html --out report.html
+./bin/toolcapsule dashboard
+```
+
+### Signed Internal Tool Plugins
+
+Teams can package tools as signed capsules and distribute them internally.
+
+```bash
+./bin/toolcapsule keygen --out team.key --pub-out team.pub
+./bin/toolcapsule run ./examples/tools/parse_csv --input examples/inputs/csv.json
+./bin/toolcapsule bundle --out parse_csv.tcbundle --sign --key team.key
+./bin/toolcapsule verify parse_csv.tcbundle --pubkey team.pub
+./bin/toolcapsule plugin install parse_csv.tcbundle --pubkey team.pub
+./bin/toolcapsule run parse_csv --input examples/inputs/csv.json
+```
+
+This creates a lightweight supply-chain story for agent tools: signed artifact, verified install, run by name.
+
+### CI Contract Testing
+
+Agent tools should be tested like normal software artifacts. ToolCapsule can run tool contract checks in CI or automation:
+
+```bash
+make build
+./bin/toolcapsule run ./examples/tools/redact_pii --input examples/inputs/pii.json
+./bin/toolcapsule replay
+./bin/toolcapsule report --html --out tool-report.html
+```
+
+This catches schema, output, timeout, and runtime regressions before an agent depends on the tool.
+
+## Why ToolCapsule
+
+ToolCapsule is useful when you want agent tools to be:
+
+- **Schema-validated**: inputs and outputs are checked with JSON Schema.
+- **Sandboxed**: suitable tools run as WASI WebAssembly through `wazero`; non-WASM tools can use Docker fallback.
+- **Replayable**: every call becomes a JSONL record that can be replayed.
+- **Auditable**: reports capture stdout, stderr, duration, backend, cache status, and hashes.
+- **Portable**: the same tool can run as CLI, MCP, HTTP, CI, or a signed plugin.
+- **Fast when warm**: persisted `wazero` compilation cache lets warm capsules start in tens of milliseconds.
 
 ```text
 Not just an MCP server.
@@ -40,11 +129,13 @@ Not just a WASM runner.
 ToolCapsule is the contract, runtime, gateway, and replay layer around agent tools.
 ```
 
-## 60-Second Demo
+## Quick Demo
 
 Build from source:
 
 ```bash
+git clone https://github.com/yigitcankzl/toolcapsule.git
+cd toolcapsule
 make build
 ./bin/toolcapsule doctor
 ./bin/toolcapsule demo
@@ -60,38 +151,89 @@ Replay and inspect the latest run:
 ./bin/toolcapsule dashboard
 ```
 
-## Install From Source
+If Go is not on `PATH`, point ToolCapsule at it:
+
+```bash
+GO=/path/to/go make build
+TOOLCAPSULE_GO=/path/to/go ./bin/toolcapsule demo
+```
 
 Requirements:
 
 - Go 1.22+
 - Docker, only if using `--fallback docker`
 
+## Try With Claude Code
+
+Build the binary:
+
 ```bash
-git clone https://github.com/yigitcankzl/toolcapsule.git
-cd toolcapsule
 make build
 ```
 
-Optional local install:
+Add ToolCapsule as a Claude Code MCP server:
 
 ```bash
-./scripts/install-local.sh
-toolcapsule doctor
+claude mcp add toolcapsule -- "$PWD/bin/toolcapsule" mcp serve "$PWD/examples/tools"
 ```
 
-If Go is not on `PATH`, point ToolCapsule at it:
+If Claude Code cannot find Go while building capsules, pass the Go path into the MCP subprocess:
 
 ```bash
-TOOLCAPSULE_GO=/path/to/go make build
-TOOLCAPSULE_GO=/path/to/go ./bin/toolcapsule demo
+claude mcp remove toolcapsule
+claude mcp add toolcapsule \
+  -e TOOLCAPSULE_GO=/path/to/go \
+  -- "$PWD/bin/toolcapsule" mcp serve "$PWD/examples/tools"
+```
+
+Check the server:
+
+```bash
+claude mcp list
+```
+
+Prompt to test:
+
+```text
+Call the ToolCapsule query_table_readonly tool with this input:
+
+{
+  "table": "tickets",
+  "select": ["id", "customer_id", "severity", "status"],
+  "where": {
+    "severity": "high",
+    "status": "open"
+  },
+  "limit": 5
+}
+
+Return the rows and explain whether the tool call was schema-validated and sandboxed.
+```
+
+Expected rows:
+
+```json
+[
+  {
+    "id": "tic_101",
+    "customer_id": "cus_001",
+    "severity": "high",
+    "status": "open"
+  },
+  {
+    "id": "tic_103",
+    "customer_id": "cus_001",
+    "severity": "high",
+    "status": "open"
+  }
+]
 ```
 
 ## Core Workflows
 
 ### CLI
 
-Run a tool directly:
+Run tools directly:
 
 ```bash
 ./bin/toolcapsule run ./examples/tools/redact_pii --input examples/inputs/pii.json
@@ -168,8 +310,6 @@ ToolCapsule records every run as JSONL. `runs/latest.jsonl` points to the latest
 
 ### Signed Plugins
 
-Capsules can be signed, verified, installed, and run by name. This is the first step toward a shareable plugin system for agent tools.
-
 Create a signing key:
 
 ```bash
@@ -194,22 +334,9 @@ Install and run the bundle as a plugin:
 
 Plugins install under `~/.toolcapsule/plugins` by default. Set `TOOLCAPSULE_HOME` to use a different plugin home in tests or sandboxes.
 
-### Automation Or CI
-
-ToolCapsule can be used in automation even before a dedicated GitHub Action exists:
-
-```bash
-make build
-./bin/toolcapsule run ./examples/tools/redact_pii --input examples/inputs/pii.json
-./bin/toolcapsule replay
-./bin/toolcapsule report --html --out tool-report.html
-```
-
-Use this to catch tool contract regressions before an agent depends on them.
-
 ## Realistic Example: Read-Only Data Query
 
-`query_table_readonly` is a small example of the kind of tool agents often need: ask a bounded question over internal data without giving the model arbitrary database or shell access.
+`query_table_readonly` shows a common enterprise pattern: answer bounded questions over internal data without giving the model arbitrary database or shell access.
 
 ```bash
 ./bin/toolcapsule run ./examples/tools/query_table_readonly --input examples/inputs/query_table.json
@@ -229,7 +356,7 @@ Example input:
 }
 ```
 
-This is intentionally narrower than raw SQL. The tool exposes a controlled read-only query shape, validates the arguments, runs inside the same runtime, and returns schema-checked rows. The same pattern can later wrap SQLite or warehouse queries behind Docker/server backends while keeping the ToolCapsule contract stable.
+This is intentionally narrower than raw SQL. The tool exposes a controlled read-only query shape, validates the arguments, runs inside the same runtime, and returns schema-checked rows. The same pattern can later wrap SQLite, warehouses, or internal APIs behind Docker/server backends while keeping the ToolCapsule contract stable.
 
 ## Tool Manifest
 
@@ -295,7 +422,7 @@ For each call, ToolCapsule:
 
 1. Loads the tool manifest.
 2. Validates the input JSON against the input schema.
-3. Analyzes the source for obvious unsupported patterns.
+3. Analyzes source for obvious unsupported patterns when building from source.
 4. Builds or reuses a cached WASI WebAssembly capsule when possible.
 5. Executes the tool with timeout and memory limits.
 6. Captures stdout, stderr, duration, cache status, hashes, and errors.
@@ -319,15 +446,15 @@ Current hardening:
 
 ### Cold Start
 
-WebAssembly is chosen for isolation *and* startup cost. A warm capsule executes in tens of milliseconds; the equivalent OS-level sandbox is orders of magnitude slower.
+WebAssembly is chosen for isolation and startup cost. A warm capsule executes in tens of milliseconds; the equivalent OS-level sandbox is orders of magnitude slower.
 
 | Backend | Per-call latency | Notes |
 |---|---|---|
 | `local-wasm`, first run | ~740 ms | wazero compiles the Go wasm module |
-| `local-wasm`, warm (compilation cache) | **~53 ms** | compiled module persisted per capsule |
+| `local-wasm`, warm compilation cache | ~53 ms | compiled module persisted per capsule |
 | `docker-sandbox` | ~27 s | builds and runs the Go tool in a container |
 
-Measured locally on the `parse_csv` example (Go → `wasip1`, `go1.24`). The warm number comes from a persistent `wazero` compilation cache stored beside each capsule, so the module is compiled once and reused across processes. TinyGo capsules are smaller again and start faster still.
+Measured locally on the `parse_csv` example. The warm number comes from a persistent `wazero` compilation cache stored beside each capsule, so the module is compiled once and reused across processes. TinyGo capsules are smaller again and start faster still.
 
 Optional toolchain environment variables:
 
@@ -341,14 +468,15 @@ TOOLCAPSULE_DOCKER_GO_IMAGE=golang:1.22
 
 ## Why Not Just Write An MCP Server?
 
-You can. ToolCapsule is useful when you want the tool runtime concerns handled consistently:
+You can. ToolCapsule is useful when you want the runtime concerns handled consistently:
 
-- One tool can run as CLI, MCP, HTTP, or automation.
+- One tool can run as CLI, MCP, HTTP, automation, or a signed plugin.
 - Input/output contracts are enforced with JSON Schema.
 - Every call is logged and replayable.
 - Reports help debug agent/tool failures.
-- WASM and Docker backends give a safer execution boundary than direct shelling out.
+- WASM and Docker backends provide a safer execution boundary than direct shelling out.
 - Tool contracts can be tested before being exposed to an agent.
+- Signed bundles make internal distribution easier to audit.
 
 ## Status
 
@@ -362,5 +490,5 @@ Near-term roadmap:
 - Dedicated GitHub Action.
 - More realistic tool templates.
 - Stronger permission policy.
-- Signed bundles and provenance.
+- Signed bundle provenance improvements.
 - Optional remote sandbox backends.
