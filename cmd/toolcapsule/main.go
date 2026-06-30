@@ -24,6 +24,9 @@ import (
 	"toolcapsule/internal/scaffold"
 )
 
+// version is set at build time via -ldflags "-X main.version=...".
+var version = "dev"
+
 func main() {
 	if err := run(os.Args); err != nil {
 		fmt.Fprintf(os.Stderr, "toolcapsule: %v\n", err)
@@ -38,6 +41,10 @@ func run(args []string) error {
 	}
 	if args[1] == "--help" || args[1] == "-h" || args[1] == "help" {
 		usageTo(os.Stdout)
+		return nil
+	}
+	if args[1] == "version" || args[1] == "--version" || args[1] == "-v" {
+		fmt.Println("toolcapsule " + version)
 		return nil
 	}
 

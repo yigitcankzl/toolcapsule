@@ -129,6 +129,41 @@ Not just a WASM runner.
 ToolCapsule is the contract, runtime, gateway, and replay layer around agent tools.
 ```
 
+## Run With Docker (zero host setup)
+
+No Go toolchain needed — the image ships one so tool capsules compile and run inside the container:
+
+```bash
+docker run --rm ghcr.io/yigitcankzl/toolcapsule:latest demo
+```
+
+Serve the example tools over HTTP:
+
+```bash
+docker run --rm -p 8080:8080 ghcr.io/yigitcankzl/toolcapsule:latest \
+  serve --http 0.0.0.0:8080 ./examples/tools
+```
+
+Build the image locally instead:
+
+```bash
+make docker        # builds ghcr.io/yigitcankzl/toolcapsule:latest
+make docker-run    # runs the demo in the container
+```
+
+## Install A Release Binary
+
+Prebuilt binaries (linux/macOS, amd64/arm64) are attached to each tagged release. Download one and run:
+
+```bash
+# example — pick the asset for your OS/arch from the Releases page
+curl -L -o toolcapsule https://github.com/yigitcankzl/toolcapsule/releases/latest/download/toolcapsule-linux-amd64
+chmod +x toolcapsule
+./toolcapsule version
+```
+
+To cut a release, push a tag (`git tag v0.1.0 && git push --tags`) — CI cross-compiles the binaries, publishes the GitHub Release with checksums, pushes the Docker image to GHCR, and attempts to make the GHCR package public. If your account requires package-admin credentials for visibility changes, add a `GHCR_ADMIN_TOKEN` repository secret with package permissions. Build binaries locally with `make release` (output in `dist/`).
+
 ## Quick Demo
 
 Build from source:
@@ -482,13 +517,17 @@ You can. ToolCapsule is useful when you want the runtime concerns handled consis
 
 ToolCapsule is an early working prototype. It is useful for demos, experimentation, and local/internal tool workflows, but the API and manifest format may still change.
 
+Done recently:
+
+- Release binaries (cross-compiled, attached to tagged releases).
+- Docker image (`ghcr.io/yigitcankzl/toolcapsule`).
+- CI + release GitHub Actions.
+- `toolcapsule version`.
+
 Near-term roadmap:
 
-- Release binaries.
-- Docker image.
 - Homebrew install path.
-- Dedicated GitHub Action.
 - More realistic tool templates.
-- Stronger permission policy.
+- Stronger permission policy (per-call scoped tokens + audit).
 - Signed bundle provenance improvements.
 - Optional remote sandbox backends.
