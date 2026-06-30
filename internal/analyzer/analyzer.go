@@ -185,7 +185,13 @@ func goListReasons(toolDir string) []string {
 	cmd.Dir = toolDir
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return []string{"go list failed: " + strings.TrimSpace(string(out))}
+		detail := strings.TrimSpace(string(out))
+		if detail == "" {
+			detail = err.Error()
+		} else {
+			detail = err.Error() + ": " + detail
+		}
+		return []string{"go list failed: " + detail}
 	}
 	seen := map[string]bool{}
 	for _, line := range strings.Split(string(out), "\n") {
