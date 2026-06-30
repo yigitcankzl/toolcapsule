@@ -48,6 +48,7 @@ jobs:
             ghcr.io/${{ github.repository }}:${{ github.ref_name }}
             ghcr.io/${{ github.repository }}:latest
       - name: Make GHCR package public
+        continue-on-error: true   # needs a PAT (GHCR_ADMIN_TOKEN); set visibility once in the UI otherwise
         env:
           # GITHUB_TOKEN can push the image. Some accounts require a classic PAT
           # with package admin/write permission to change GHCR visibility.
